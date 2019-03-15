@@ -22,6 +22,7 @@ class Homeassistant extends EventEmitter {
     this.promises = {}
     this.states = []
     this.id = 1
+    this.connected = false;
   }
 
   connect() {
@@ -35,7 +36,11 @@ class Homeassistant extends EventEmitter {
       }
 
       if (data.type == 'auth_required') {
-        if (!this.config.password) throw new Error('Password required')
+        if (!this.config.password && !this.config.token) throw new Error('Password or Token required')
+
+        if (this.config.token) {
+          return this.send({type: 'auth', access_token: this.config.token}, false)
+        }
 
         return this.send({type: 'auth', api_password: this.config.password}, false)
       }
@@ -69,11 +74,13 @@ class Homeassistant extends EventEmitter {
 
     this.ws.on('error',  () => {
       this.emit('connection', 'connection_error')
+      this.connected = false
       this.reconnect()
     })
 
     this.ws.on('close', () => {
       this.emit('connection', 'connection_closed')
+      this.connected = false
       this.reconnect()
     })
 
@@ -82,15 +89,18 @@ class Homeassistant extends EventEmitter {
         if (info == 'authenticated') resolve(this)
       })
     }).then(() => {
-      return this.send({
-        type: 'get_states'
-      })
-    }).then(states => {
-      this.states = states.result
+      if(!this.connected) {
+        this.connected = true
+        return this.send({
+          type: 'get_states'
+        }).then(states => {
+          this.states = states.result
 
-      return this.subscribe({
-        callback: this.updateState.bind(this)
-      })
+          return this.subscribe({
+            callback: this.processEvent.bind(this),
+          })
+        })
+      }
     })
   }
 
@@ -113,6 +123,7 @@ class Homeassistant extends EventEmitter {
   }
 
   send(data, addId = true) {
+    console.log('SENDING',data)
     if (addId) {
       data.id = this.id
       this.id++
@@ -130,6 +141,7 @@ class Homeassistant extends EventEmitter {
   }
 
   call(options) {
+    console.log('HASS CALL',options)
     return this.send(Object.assign({type: 'call_service'}, options))
   }
 
@@ -138,7 +150,7 @@ class Homeassistant extends EventEmitter {
 
     let data = { type: 'subscribe_events' }
 
-    if(options.event) data.event_type = event
+    if(options.event) data.event_type = options.event
 
     return this.send(data)
       .then((data) => {
@@ -160,14 +172,15 @@ class Homeassistant extends EventEmitter {
     return this.states.findIndex(state => state.entity_id === id)
   }
 
-  updateState(change) {
-    let data = change.event.data
-    if (change.event.event_type !== 'state_changed') return true
-
-    let changeIndex = this.findEntity(data.entity_id)
-
-    this.states[changeIndex] = data.new_state
-    this.emit(`state:${data.entity_id}`, data)
+  processEvent(change) {
+    if (change.event.event_type == 'state_changed') {
+      let data = change.event.data
+      let changeIndex = this.findEntity(data.entity_id)
+      this.states[changeIndex] = data.new_state
+      this.emit(`state:${data.entity_id}`, data)
+    } else {
+      this.emit(`event:${change.event.event_type}`, change.event)
+    }
   }
 
   state(entity) {
