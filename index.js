@@ -123,7 +123,6 @@ class Homeassistant extends EventEmitter {
   }
 
   send(data, addId = true) {
-    console.log('SENDING',data)
     if (addId) {
       data.id = this.id
       this.id++
@@ -141,7 +140,6 @@ class Homeassistant extends EventEmitter {
   }
 
   call(options) {
-    console.log('HASS CALL',options)
     return this.send(Object.assign({type: 'call_service'}, options))
   }
 
